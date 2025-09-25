@@ -20,7 +20,7 @@ try:
 except Exception:
     pass
 
-ES_URL = os.getenv("ES_URL", "http://178.128.219.5:9200")
+ES_URL = os.getenv("ES_URL", "http://localhost:9200")
 STUNTING_INDEX = os.getenv("STUNTING_INDEX", "stunting-data")
 NUTRITION_INDEX = os.getenv("NUTRITION_INDEX", "jabar-tenaga-gizi")
 
