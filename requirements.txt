@@ -8,4 +8,5 @@ scikit-learn==1.6.1
 plotly
 elasticsearch
 python-dotenv
-openai
+# openai
+google-genai
