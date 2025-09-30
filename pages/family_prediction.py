@@ -1,38 +1,44 @@
 import streamlit as st
 import pandas as pd
 import os
-import openai  # Mengganti requests dengan library resmi OpenAI
+from google import genai  # ganti OpenAI ke Google GenAI
 from src import prediction_service, styles, elastic_client as es
 
 
-# ==============================================================================
-# LOGIKA UNTUK FITUR REKOMENDASI AI (DI-UPGRADE KE OPENAI)
-# ==============================================================================
-def _get_openai_api_key():
-    # Mencari OPENAI_API_KEY
-    env_key = os.getenv("OPENAI_API_KEY", "")
-    if env_key:
-        return env_key
+# ======================================================================
+# KONFIGURASI GOOGLE GENAI (selaras dengan InsightNow)
+# ======================================================================
+def _configure_gemini():
+    api_key = os.getenv("GEMINI_API_KEY")
+    if api_key:
+        return api_key
     try:
-        return st.secrets.get("OPENAI_API_KEY", "")
+        api_key = st.secrets.get("GEMINI_API_KEY")
+        if api_key:
+            os.environ["GEMINI_API_KEY"] = api_key
+            return api_key
     except Exception:
-        return ""
+        pass
+    return None
 
 
+# ======================================================================
+# LOGIKA UNTUK FITUR REKOMENDASI AI (DIPINDAHKAN KE GOOGLE GENAI)
+# ======================================================================
 def generate_recommendation(
     user_data: dict, prediction_proba: float, prediction_result: str
 ) -> str:
-    api_key = _get_openai_api_key()
+    api_key = _configure_gemini()
     if not api_key:
         return (
             "**Rekomendasi AI tidak tersedia.**\n\n"
-            "API Key untuk OpenAI (`OPENAI_API_KEY`) belum di-set."
+            "API Key untuk Google Gemini (`GEMINI_API_KEY`) belum di-set."
         )
 
     try:
-        client = openai.OpenAI(api_key=api_key)
+        client = genai.Client()
     except Exception as e:
-        return f"Gagal menginisialisasi client OpenAI: {e}"
+        return f"Gagal menginisialisasi Google Gemini client: {e}"
 
     # --- PROMPT ENGINEERING (Tetap Sama) ---
     friendly_names = {
@@ -69,46 +75,49 @@ def generate_recommendation(
     Anda adalah seorang ahli gizi dan kesehatan anak senior dari dinas kesehatan Indonesia.
     Anda ditugaskan untuk memberikan analisis singkat, padat, dan actionable berdasarkan data individual seorang ibu hamil.
 
-    **DATA YANG WAJIB DIANALISIS:**
-    Berikut adalah data individual dari seorang ibu hamil:
+    DATA INDIVIDU:
     {data_string}
 
-    **HASIL PREDIKSI SISTEM (UNTUK ANAK YANG AKAN LAHIR):**
+    HASIL PREDIKSI SISTEM (UNTUK ANAK YANG AKAN LAHIR):
     - Prediksi Risiko Stunting: {prediction_result}
     - Probabilitas Risiko: {prediction_proba:.2f}%
 
-    **TUGAS ANDA:**
-    Berdasarkan **HANYA PADA DATA DI ATAS**, berikan analisis dan rekomendasi Anda dalam format Markdown yang ketat sebagai berikut. Gunakan bahasa yang simpatik namun tetap profesional untuk dibaca oleh kader posyandu atau petugas lapangan.
+    TUGAS:
+    Berdasarkan HANYA PADA DATA DI ATAS, berikan analisis dan rekomendasi Anda dalam format Markdown:
 
     ### Ringkasan Analisis
-    (Berikan kesimpulan 1-2 kalimat tentang status risiko kehamilan ini berdasarkan data yang paling menonjol.)
+    (1-2 kalimat.)
 
     ### Faktor Risiko Kunci
-    (Identifikasi 2-3 faktor dari data yang paling signifikan meningkatkan risiko. Jelaskan secara singkat mengapa.)
+    (2-3 faktor paling signifikan + alasan singkat.)
 
     ### Kekuatan & Potensi
-    (Jika ada, sebutkan faktor-faktor positif dari data yang sudah baik dan dapat menjadi modal bagi ibu.)
+    (Faktor protektif bila ada.)
 
     ### Rekomendasi Prioritas
-    (Berikan 3 poin rekomendasi yang paling penting, praktis, dan dapat segera ditindaklanjuti oleh ibu hamil ini. Gunakan poin bernomor.)
+    (3 poin, praktis, bernomor.)
     """
 
-    # --- PEMANGGILAN API BARU (Menggunakan OpenAI) ---
+    # --- PANGGIL GOOGLE GENAI (MODEL SAMA DENGAN InsightNow) ---
     try:
-        response = client.chat.completions.create(
-            model="gpt-4.1-nano",  # Menggunakan model yang diminta
-            messages=[
-                {
-                    "role": "system",
-                    "content": "Anda adalah seorang ahli gizi dan kesehatan anak senior dari dinas kesehatan Indonesia.",
+        try:
+            response = client.models.generate_content(
+                model="models/gemma-3-27b-it",
+                contents=prompt,
+                config={
+                    "temperature": 0.25,
+                    "max_output_tokens": 1200,
                 },
-                {"role": "user", "content": prompt},
-            ],
-            timeout=45,
-        )
-        return response.choices[0].message.content
+            )
+        except TypeError:
+            # Fallback untuk versi SDK berbeda
+            response = client.models.generate_content(
+                model="models/gemma-3-27b-it",
+                contents=prompt,
+            )
+        return response.text
     except Exception as e:
-        return f"Gagal menghubungi server OpenAI. Mohon coba lagi nanti. Error: {e}"
+        return f"Gagal memanggil Google Gemini API: {e}"
 
 
 # --- BAGIAN UTAMA APLIKASI STREAMLIT (TIDAK ADA PERUBAHAN) ---
