@@ -2,49 +2,48 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import os
-import openai
+# Hapus OpenAI dan gunakan Google GenAI
+from google import genai
 from src import styles, elastic_client as es
 from src.components import sidebar
 
+# Tambahkan konfigurasi Gemini (selaras dengan halaman lain)
+def _configure_gemini():
+    api_key = os.getenv("GEMINI_API_KEY")
+    if api_key:
+        return api_key
+    try:
+        api_key = st.secrets.get("GEMINI_API_KEY")
+        if api_key:
+            os.environ["GEMINI_API_KEY"] = api_key
+            return api_key
+    except Exception:
+        pass
+    return None
 
 # --- FUNGSI BARU UNTUK INSIGHT AI ---
-def _get_openai_api_key():
-    # Mencari OPENAI_API_KEY
-    env_key = os.getenv("OPENAI_API_KEY", "")
-    if env_key:
-        return env_key
-    try:
-        return st.secrets.get("OPENAI_API_KEY", "")
-    except Exception:
-        return ""
-
-
+# Hapus _get_openai_api_key dan ganti implementasi generate_ai_insight
 def generate_ai_insight(
     filters: dict, trend_df: pd.DataFrame, corr_series: pd.Series
 ) -> str:
     """
     Menghasilkan insight dari AI berdasarkan data tren dan korelasi yang terfilter.
     """
-    api_key = _get_openai_api_key()
+    api_key = _configure_gemini()
     if not api_key:
-        return "**Insight AI tidak tersedia.** `OPENAI_API_KEY` belum diatur."
+        return "**Insight AI tidak tersedia.** `GEMINI_API_KEY` belum diatur."
 
     try:
-        client = openai.OpenAI(api_key=api_key)
+        client = genai.Client()
     except Exception as e:
-        return f"Gagal menginisialisasi client OpenAI: {e}"
+        return f"Gagal menginisialisasi Google Gemini client: {e}"
 
     # --- Merangkum data untuk prompt ---
     # 1. Ringkasan Tren
     trend_summary = "Data tren tidak cukup untuk dianalisis."
     if not trend_df.empty and len(trend_df) > 1:
-        # ======================================================================
-        # FIX: Pastikan index adalah DatetimeIndex sebelum menggunakan strftime
-        # ======================================================================
         if not isinstance(trend_df.index, pd.DatetimeIndex):
             trend_df.index = pd.to_datetime(trend_df.index)
-        # ======================================================================
-
         start_date = trend_df.index[0].strftime("%Y-%m")
         end_date = trend_df.index[-1].strftime("%Y-%m")
         start_val = trend_df["Stunting %"].iloc[0]
@@ -62,21 +61,10 @@ def generate_ai_insight(
     if not corr_series.empty:
         top_positive = corr_series[corr_series > 0].nlargest(3)
         top_negative = corr_series[corr_series < 0].nsmallest(3)
-
         pos_list = [f"{idx} ({val:.2f})" for idx, val in top_positive.items()]
         neg_list = [f"{idx} ({val:.2f})" for idx, val in top_negative.items()]
-
-        pos_str = (
-            ", ".join(pos_list)
-            if pos_list
-            else "Tidak ada korelasi positif yang signifikan."
-        )
-        neg_str = (
-            ", ".join(neg_list)
-            if neg_list
-            else "Tidak ada korelasi negatif yang signifikan."
-        )
-
+        pos_str = ", ".join(pos_list) if pos_list else "Tidak ada korelasi positif yang signifikan."
+        neg_str = ", ".join(neg_list) if neg_list else "Tidak ada korelasi negatif yang signifikan."
         corr_summary = (
             f"Faktor dengan korelasi positif terkuat terhadap Z-Score (kondisi lebih baik): {pos_str}. "
             f"Faktor dengan korelasi negatif terkuat (kondisi lebih buruk): {neg_str}."
@@ -86,34 +74,38 @@ def generate_ai_insight(
     prompt = f"""
     Anda adalah seorang analis data senior di dinas kesehatan, bertugas memberikan ringkasan eksekutif.
     
-    **Konteks Filter Data:**
+    Konteks Filter Data:
     {filters}
 
-    **Ringkasan Data Analisis:**
-    1.  **Analisis Tren:** {trend_summary}
-    2.  **Analisis Korelasi:** {corr_summary}
+    Ringkasan Data Analisis:
+    1. Analisis Tren: {trend_summary}
+    2. Analisis Korelasi: {corr_summary}
 
-    **Tugas Anda:**
-    Berdasarkan **HANYA PADA DATA RINGKASAN DI ATAS**, berikan 2-3 poin insight utama dalam format bullet points (gunakan tanda `-`).
-    Fokus pada temuan yang paling signifikan atau actionable. Jawaban harus singkat, padat, dan langsung ke intinya.
+    Tugas:
+    Berdasarkan HANYA PADA DATA RINGKASAN DI ATAS, berikan 2-3 poin insight utama dalam format bullet points (gunakan tanda `-`).
+    Fokus pada temuan paling signifikan atau actionable. Jawaban harus singkat, padat, dan langsung ke inti.
     """
 
+    # Panggil Google GenAI (model sama dengan InsightNow)
     try:
-        response = client.chat.completions.create(
-            model="gpt-4.1-nano",
-            messages=[
-                {
-                    "role": "system",
-                    "content": "Anda adalah seorang analis data senior yang ahli memberikan ringkasan eksekutif.",
+        try:
+            response = client.models.generate_content(
+                model="models/gemma-3-27b-it",
+                contents=prompt,
+                config={
+                    "temperature": 0.25,
+                    "max_output_tokens": 800,
                 },
-                {"role": "user", "content": prompt},
-            ],
-            timeout=60,
-        )
-        return response.choices[0].message.content
+            )
+        except TypeError:
+            # Fallback kompatibilitas SDK
+            response = client.models.generate_content(
+                model="models/gemma-3-27b-it",
+                contents=prompt,
+            )
+        return response.text
     except Exception as e:
-        return f"Gagal menghubungi server OpenAI: {e}"
-
+        return f"Gagal memanggil Google Gemini API: {e}"
 
 # --- RENDER HALAMAN ---
 def render_page():
@@ -131,7 +123,6 @@ def render_page():
     with c1:
         st.markdown("**Tren Proporsi Stunting per Bulan**")
         if not df_trend.empty:
-            # Menggunakan df_trend langsung karena sudah memiliki index yang benar
             st.line_chart(df_trend)
         else:
             st.warning("Data tren tidak tersedia untuk filter saat ini.")
@@ -140,7 +131,6 @@ def render_page():
         st.markdown("**Faktor Paling Berpengaruh (Korelasi thd Z-Score)**")
         target_col = "ZScore TB/U"
 
-        # Inisialisasi corr_risk untuk memastikan variabel ada
         corr_risk = pd.Series(dtype=float)
 
         if (
@@ -208,7 +198,6 @@ def render_page():
         with st.spinner("AI sedang menganalisis tren dan korelasi..."):
             ai_insight = generate_ai_insight(filters, df_trend, corr_risk)
             st.markdown(ai_insight)
-
 
 # --- Main Execution ---
 if "page_config_set" not in st.session_state:
