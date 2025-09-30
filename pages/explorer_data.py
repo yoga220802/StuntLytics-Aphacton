@@ -3,23 +3,27 @@ import pandas as pd
 import plotly.express as px
 from datetime import datetime
 import os
-import openai
+# ganti OpenAI ke Google GenAI
+from google import genai
 import json
 
 from src import styles
 from src import elastic_client as es
 from src.components import sidebar
 
-
-# --- FUNGSI BARU UNTUK INSIGHT AI ---
-def _get_openai_api_key():
-    env_key = os.getenv("OPENAI_API_KEY", "")
-    if env_key:
-        return env_key
+# Tambahkan konfigurasi Gemini (selaras dengan halaman lain)
+def _configure_gemini():
+    api_key = os.getenv("GEMINI_API_KEY")
+    if api_key:
+        return api_key
     try:
-        return st.secrets.get("OPENAI_API_KEY", "")
+        api_key = st.secrets.get("GEMINI_API_KEY")
+        if api_key:
+            os.environ["GEMINI_API_KEY"] = api_key
+            return api_key
     except Exception:
-        return ""
+        pass
+    return None
 
 
 def generate_ai_summary(
@@ -28,14 +32,14 @@ def generate_ai_summary(
     """
     Menghasilkan ringkasan cerdas dari AI berdasarkan data yang ditampilkan di explorer.
     """
-    api_key = _get_openai_api_key()
+    api_key = _configure_gemini()
     if not api_key:
-        return "**Ringkasan AI tidak tersedia.** `OPENAI_API_KEY` belum diatur."
+        return "**Ringkasan AI tidak tersedia.** `GEMINI_API_KEY` belum diatur."
 
     try:
-        client = openai.OpenAI(api_key=api_key)
+        client = genai.Client()
     except Exception as e:
-        return f"Gagal menginisialisasi client OpenAI: {e}"
+        return f"Gagal menginisialisasi Google Gemini client: {e}"
 
     # --- Merangkum DataFrame menjadi statistik untuk prompt ---
     if df.empty:
@@ -70,34 +74,38 @@ def generate_ai_summary(
     prompt = f"""
     Anda adalah seorang analis data kesehatan masyarakat yang sangat teliti. Tugas Anda adalah memberikan analisis singkat dan tajam terhadap sub-kelompok data stunting yang sudah difilter.
 
-    **Konteks Filter Aktif:**
+    Konteks Filter Aktif:
     - Filter Utama: {main_filters}
     - Filter Lanjutan: {advanced_filters}
 
-    **Ringkasan Statistik dari Data Terfilter:**
-    ```json
+    Ringkasan Statistik dari Data Terfilter:
     {summary_json}
-    ```
 
-    **Tugas Anda:**
-    Berdasarkan **HANYA PADA RINGKASAN STATISTIK DI ATAS**, berikan 2-3 poin analisis utama dalam format bullet points (`-`). Fokus pada karakteristik yang paling menonjol dari kelompok ini. Apa yang bisa disimpulkan tentang profil risiko mereka? Jawaban harus singkat, padat, dan berbasis data.
+    Tugas:
+    Berdasarkan HANYA PADA RINGKASAN STATISTIK DI ATAS, berikan 2-3 poin analisis utama dalam format bullet points (-).
+    Fokus pada karakteristik yang paling menonjol dari kelompok ini. Jawaban harus singkat, padat, dan berbasis data.
     """
 
+    # Panggil Google GenAI (model sama dengan InsightNow)
     try:
-        response = client.chat.completions.create(
-            model="gpt-4.1-nano",
-            messages=[
-                {
-                    "role": "system",
-                    "content": "Anda adalah analis data kesehatan masyarakat yang ahli menganalisis sub-kelompok data.",
+        try:
+            response = client.models.generate_content(
+                model="models/gemma-3-27b-it",
+                contents=prompt,
+                config={
+                    "temperature": 0.25,
+                    "max_output_tokens": 800,
                 },
-                {"role": "user", "content": prompt},
-            ],
-            timeout=90,
-        )
-        return response.choices[0].message.content
+            )
+        except TypeError:
+            # Fallback kompatibilitas SDK
+            response = client.models.generate_content(
+                model="models/gemma-3-27b-it",
+                contents=prompt,
+            )
+        return response.text
     except Exception as e:
-        return f"Gagal menghubungi server OpenAI: {e}"
+        return f"Gagal memanggil Google Gemini API: {e}"
 
 
 # --- RENDER HALAMAN ---
