@@ -157,34 +157,39 @@ def render_page():
 
             # --- Chart Berjenjang ---
             st.markdown("---")
-            # (Logika chart berjenjang dari sebelumnya, tidak berubah)
             if main_filters.get("kecamatan"):
-                st.markdown(
-                    "##### Top 5 Keluarga Paling Berisiko (Berdasarkan Z-Score)"
-                )
-                df_chart_data = df_display.nsmallest(5, "Z-Score").copy()
-                df_chart_data["Identifier"] = (
-                    "ID Baris: "
-                    + df_chart_data["id_baris"].astype(str)
-                    + " (Z-Score: "
-                    + df_chart_data["Z-Score"].round(2).astype(str)
-                    + ")"
-                )
-                fig = px.bar(
-                    df_chart_data.sort_values("Z-Score", ascending=False),
-                    x="Z-Score",
-                    y="Identifier",
-                    orientation="h",
-                    title=f"5 Kasus Z-Score Terendah di Kec. {main_filters['kecamatan'][0]}",
-                    labels={"Z-Score": "Z-Score", "Identifier": "Data Individual"},
-                    text="Z-Score",
-                )
-                fig.update_traces(
-                    texttemplate="%{text:.2f}",
-                    textposition="outside",
-                    marker_color="#ef4444",
-                )
-                fig.update_layout(yaxis={"categoryorder": "total ascending"})
+                st.markdown("##### Top 5 Keluarga Paling Berisiko (Berdasarkan Z-Score)")
+
+                # Pastikan Z-Score numerik sebelum nsmallest
+                df_display["Z-Score"] = pd.to_numeric(df_display["Z-Score"], errors="coerce")
+                if df_display["Z-Score"].dropna().empty:
+                    st.warning("Kolom Z-Score tidak numerik atau kosong sehingga tidak bisa menentukan Top 5.")
+                    fig = None
+                else:
+                    top_idx = df_display["Z-Score"].nsmallest(5).index
+                    df_chart_data = df_display.loc[top_idx].copy()
+                    df_chart_data["Identifier"] = (
+                        "ID Baris: "
+                        + df_chart_data["id_baris"].astype(str)
+                        + " (Z-Score: "
+                        + df_chart_data["Z-Score"].round(2).astype(str)
+                        + ")"
+                    )
+                    fig = px.bar(
+                        df_chart_data.sort_values("Z-Score", ascending=False),
+                        x="Z-Score",
+                        y="Identifier",
+                        orientation="h",
+                        title=f"5 Kasus Z-Score Terendah di Kec. {main_filters['kecamatan'][0]}",
+                        labels={"Z-Score": "Z-Score", "Identifier": "Data Individual"},
+                        text="Z-Score",
+                    )
+                    fig.update_traces(
+                        texttemplate="%{text:.2f}",
+                        textposition="outside",
+                        marker_color="#ef4444",
+                    )
+                    fig.update_layout(yaxis={"categoryorder": "total ascending"})
             else:
                 df_agg = es.get_top_counts_for_explorer_chart(
                     main_filters, advanced_filters
